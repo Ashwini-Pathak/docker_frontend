@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: Two-Tier App CI/CD (No Docker Compose)
 
 on:
   push:
@@ -7,22 +7,28 @@ on:
 
 jobs:
   sonar:
-    name: Run SonarQube Analysis
+    name: SonarQube Analysis
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-     - name: SonarQube Scan
-  uses: sonarsource/sonarqube-scan-action@master
-  with:
-    args: >
-      -Dsonar.projectKey=my-app
-      -Dsonar.sources=.
-      -Dsonar.host.url=http://54.152.1.194:9000
-  env:
-    SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Setup Java (SonarQube requirement)
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
 
+      - name: Run SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: http://${{ secrets.EC2_HOST }}:9000
+
+  deploy:
+    name: Deploy to EC2 (Docker Only)
+    needs: sonar
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
@@ -33,15 +39,31 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Copy files to EC2
+      - name: Sync Code to EC2
         run: |
-          rsync -avz -e "ssh -o StrictHostKeyChecking=no" ./ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/my-app
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" ./ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/my-app/
 
-      - name: SSH and Deploy
+      - name: SSH into EC2 and deploy containers manually
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
-            cd ~/docker_compose
-            docker-compose down
-            docker-compose up -d --build
-          EOF
+            cd ~/docker_frontend/docker_compose
 
+            echo "Building backend image..."
+            docker build -t my-backend ./node_backend 
+
+            echo "Stopping old backend container..."
+            docker stop backend || true && docker rm backend || true
+
+            echo "Running backend container..."
+            docker run -d --name backend -p 8081:8081 my-backend
+
+            echo "Building frontend image..."
+            docker build -t my-frontend ./web_frontend
+
+
+            echo "Stopping old frontend container..."
+            docker stop frontend || true && docker rm frontend || true
+
+            echo "Running frontend container..."
+            docker run -d --name frontend -p 9091:80 my-frontend
+          EOF
