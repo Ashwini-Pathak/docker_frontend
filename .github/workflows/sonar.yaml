@@ -14,11 +14,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Setup Java (SonarQube requirement)
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-
       - name: Run SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@master
         env:
